@@ -43,21 +43,48 @@ class JSONToMarkdownPlugin extends obsidian.Plugin {
         const inputFolder = this.app.vault.getAbstractFileByPath(this.settings.inputFolder);
         const outputFolder = this.app.vault.getAbstractFileByPath(this.settings.outputFolder);
 
-        if (!inputFolder || !(inputFolder instanceof obsidian.TFolder)) {
-            new obsidian.Notice(`Input folder "${this.settings.inputFolder}" not found!`);
+        // Create input folder if it doesn't exist
+        if (!inputFolder) {
+            try {
+                await this.app.vault.createFolder(this.settings.inputFolder);
+                new obsidian.Notice(`Created input folder "${this.settings.inputFolder}"`);
+                // Refresh input folder reference
+                const newInputFolder = this.app.vault.getAbstractFileByPath(this.settings.inputFolder);
+                if (!newInputFolder || !(newInputFolder instanceof obsidian.TFolder)) {
+                    new obsidian.Notice(`Failed to access newly created input folder!`);
+                    return;
+                }
+            } catch (error) {
+                new obsidian.Notice(`Failed to create input folder: ${error}`);
+                return;
+            }
+        } else if (!(inputFolder instanceof obsidian.TFolder)) {
+            new obsidian.Notice(`"${this.settings.inputFolder}" exists but is not a folder!`);
             return;
         }
 
+        // Create output folder if it doesn't exist
         if (!outputFolder) {
             try {
                 await this.app.vault.createFolder(this.settings.outputFolder);
+                new obsidian.Notice(`Created output folder "${this.settings.outputFolder}"`);
             } catch (error) {
                 new obsidian.Notice(`Failed to create output folder: ${error}`);
                 return;
             }
+        } else if (!(outputFolder instanceof obsidian.TFolder)) {
+            new obsidian.Notice(`"${this.settings.outputFolder}" exists but is not a folder!`);
+            return;
         }
 
-        const jsonFiles = inputFolder.children.filter(file => 
+        // Re-get the input folder to ensure it's updated
+        const refreshedInputFolder = this.app.vault.getAbstractFileByPath(this.settings.inputFolder);
+        if (!refreshedInputFolder || !(refreshedInputFolder instanceof obsidian.TFolder)) {
+            new obsidian.Notice(`Could not access input folder!`);
+            return;
+        }
+
+        const jsonFiles = refreshedInputFolder.children.filter(file => 
             file instanceof obsidian.TFile && file.extension === 'json'
         );
 
@@ -112,7 +139,36 @@ class JSONToMarkdownPlugin extends obsidian.Plugin {
                     mdLines.push("### Response:");
                     for (const response of request.response) {
                         if (response.value) {
-                            mdLines.push(response.value);
+                            let value = response.value;
+                            
+                            // Properly handle terminal code blocks
+                            // Look for any code blocks with optional language specification
+                            const codeBlockRegex = /```([a-zA-Z0-9_\-+]*)?(?:\s*\n)?([\s\S]*?)```/g;
+                            let match;
+                            let lastIndex = 0;
+                            let processedValue = '';
+                            
+                            while ((match = codeBlockRegex.exec(value)) !== null) {
+                                // Add text before the code block
+                                processedValue += value.substring(lastIndex, match.index);
+                                
+                                // Get the code content and language
+                                const language = match[1] || '';
+                                let codeContent = match[2].trim();
+                                
+                                // Format as proper markdown code block
+                                processedValue += `\`\`\`${language}\n${codeContent}\n\`\`\``;
+                                
+                                lastIndex = match.index + match[0].length;
+                            }
+                            
+                            // Add any remaining text after the last code block
+                            if (lastIndex < value.length) {
+                                processedValue += value.substring(lastIndex);
+                            }
+                            
+                            // If we processed code blocks, use the processed value, otherwise use original
+                            mdLines.push(lastIndex > 0 ? processedValue : value);
                         }
                     }
                 }

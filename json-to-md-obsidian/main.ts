@@ -50,21 +50,48 @@ export default class JSONToMarkdownPlugin extends Plugin {
 		const inputFolder = this.app.vault.getAbstractFileByPath(this.settings.inputFolder);
 		const outputFolder = this.app.vault.getAbstractFileByPath(this.settings.outputFolder);
 
-		if (!inputFolder || !(inputFolder instanceof TFolder)) {
-			new Notice(`Input folder "${this.settings.inputFolder}" not found!`);
+		// Create input folder if it doesn't exist
+		if (!inputFolder) {
+			try {
+				await this.app.vault.createFolder(this.settings.inputFolder);
+				new Notice(`Created input folder "${this.settings.inputFolder}"`);
+				// Refresh input folder reference
+				const newInputFolder = this.app.vault.getAbstractFileByPath(this.settings.inputFolder);
+				if (!newInputFolder || !(newInputFolder instanceof TFolder)) {
+					new Notice(`Failed to access newly created input folder!`);
+					return;
+				}
+			} catch (error) {
+				new Notice(`Failed to create input folder: ${error}`);
+				return;
+			}
+		} else if (!(inputFolder instanceof TFolder)) {
+			new Notice(`"${this.settings.inputFolder}" exists but is not a folder!`);
 			return;
 		}
 
+		// Create output folder if it doesn't exist
 		if (!outputFolder) {
 			try {
 				await this.app.vault.createFolder(this.settings.outputFolder);
+				new Notice(`Created output folder "${this.settings.outputFolder}"`);
 			} catch (error) {
 				new Notice(`Failed to create output folder: ${error}`);
 				return;
 			}
+		} else if (!(outputFolder instanceof TFolder)) {
+			new Notice(`"${this.settings.outputFolder}" exists but is not a folder!`);
+			return;
 		}
 
-		const jsonFiles = inputFolder.children.filter(file => 
+		// Re-get the input folder to ensure it's updated
+		const refreshedInputFolder = this.app.vault.getAbstractFileByPath(this.settings.inputFolder);
+		if (!refreshedInputFolder || !(refreshedInputFolder instanceof TFolder)) {
+			new Notice(`Could not access input folder!`);
+			return;
+		}
+
+		const jsonFiles = refreshedInputFolder.children.filter(file => 
 			file instanceof TFile && file.extension === 'json'
 		);
 
@@ -117,16 +144,118 @@ export default class JSONToMarkdownPlugin extends Plugin {
 
 				if (request.response) {
 					mdLines.push("### Response:");
+					
+					// Accumulate response content for each request
+					let responseContent = '';
+					let commandOutput = '';
+					let inCommandContext = false;
+					
 					for (const response of request.response) {
+						// Handle different types of responses
 						if (response.value) {
-							mdLines.push(response.value);
+							// If we were in a command context, this might be the output
+							if (inCommandContext) {
+								commandOutput += response.value;
+								inCommandContext = false;
+							} else {
+								responseContent += response.value;
+							}
+						} 
+						else if (response.kind === 'inlineReference' && response.inlineReference) {
+							// Handle file references
+							const path = response.inlineReference.path;
+							if (path) {
+								const fileName = path.split('/').pop();
+								responseContent += `\`${fileName}\``;
+							}
+						}
+						else if (response.kind === 'toolInvocationSerialized') {
+							// Handle terminal commands
+							if (response.toolSpecificData && response.toolSpecificData.kind === 'terminal') {
+								const command = response.toolSpecificData.command;
+								const language = response.toolSpecificData.language || 'bash';
+								if (command) {
+									// If there was previous command output, add it before the new command
+									if (commandOutput) {
+										responseContent += `\n\n${commandOutput}\n\n`;
+										commandOutput = '';
+									}
+									
+									responseContent += `\n\`\`\`${language}\n${command}\n\`\`\`\n`;
+									inCommandContext = true; // Mark that the next value might be output
+								}
+							}
+							// Other tool invocations that might need special handling
+							else if (response.toolId === 'copilot_readFile' && response.pastTenseMessage) {
+								// Extract file read operations
+								const readFileMatch = /Read \[\]\(file:\/\/\/(.*?)\)/.exec(response.pastTenseMessage.value);
+								if (readFileMatch && readFileMatch[1]) {
+									const filePath = readFileMatch[1];
+									const fileName = filePath.split('/').pop();
+									responseContent += `\nRead file: \`${fileName}\`\n`;
+								}
+							}
+						}
+						else if (response.kind === 'codeblockUri' && response.uri) {
+							// Handle code block URIs
+							const path = response.uri.path;
+							if (path) {
+								const fileName = path.split('/').pop();
+								responseContent += `\nFile: \`${fileName}\`\n`;
+							}
 						}
 					}
+					
+					// Add any remaining command output
+					if (commandOutput) {
+						responseContent += `\n\n${commandOutput}\n`;
+					}
+					
+					// Process code blocks within the text
+					const processedContent = this.processCodeBlocks(responseContent);
+					
+					mdLines.push(processedContent);
 				}
 			}
 		}
 
 		return mdLines.join('\n\n');
+	}
+	
+	// Helper method to process code blocks in text
+	processCodeBlocks(text: string): string {
+		if (!text) return '';
+		
+		// Look for any code blocks with optional language specification
+		const codeBlockRegex = /```([a-zA-Z0-9_\-+]*)?(?:\s*\n)?([\s\S]*?)```/g;
+		let match;
+		let lastIndex = 0;
+		let processedValue = '';
+		
+		while ((match = codeBlockRegex.exec(text)) !== null) {
+			// Add text before the code block
+			processedValue += text.substring(lastIndex, match.index);
+			
+			// Get the code content and language
+			const language = match[1] || '';
+			let codeContent = match[2].trim();
+			
+			// Format as proper markdown code block
+			processedValue += `\n\`\`\`${language}\n${codeContent}\n\`\`\`\n`;
+			
+			lastIndex = match.index + match[0].length;
+		}
+		
+		// Add any remaining text after the last code block
+		if (lastIndex < text.length) {
+			processedValue += text.substring(lastIndex);
+		}
+		
+		// Clean up excessive newlines
+		processedValue = processedValue.replace(/\n{3,}/g, '\n\n');
+		
+		// If we didn't process any code blocks, just return the original text
+		return lastIndex > 0 ? processedValue : text;
 	}
 }
 
