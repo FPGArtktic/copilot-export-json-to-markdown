@@ -1,0 +1,8 @@
+/* Dodatkowe style dla pluginu JSON to Markdown */
+.json-to-md-success {
+    color: var(--text-success);
+}
+
+.json-to-md-error {
+    color: var(--text-error);
+}

@@ -1,0 +1,11 @@
+{
+  "id": "json-to-md-converter",
+  "name": "JSON to Markdown Converter",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Converts JSON files to Markdown format in Obsidian",
+  "author": "Mateusz Okulanis",
+  "authorUrl": "mailto:FPGArtktic@outlook.com",
+  "isDesktopOnly": false,
+  "main": "main.js"
+}
