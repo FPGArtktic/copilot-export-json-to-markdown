@@ -44,7 +44,8 @@ def convert_to_markdown(data):
     if 'requests' in data:
         for request in data['requests']:
             if 'message' in request and 'text' in request['message']:
-                md_lines.append(f"## Request: {request['message']['text']}")
+                md_lines.append("## Request:")
+                md_lines.append(f"{request['message']['text']}")
 
             if 'response' in request:
                 md_lines.append("## Response:")
