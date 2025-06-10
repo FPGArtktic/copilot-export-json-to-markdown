@@ -47,7 +47,7 @@ def convert_to_markdown(data):
                 md_lines.append(f"## Request: {request['message']['text']}")
 
             if 'response' in request:
-                md_lines.append("### Response:")
+                md_lines.append("## Response:")
                 for response in request['response']:
                     if 'value' in response:
                         md_lines.append(response['value'])
